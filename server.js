@@ -4,6 +4,7 @@ const path = require('path');
 
 const ROOT = __dirname;
 const MIRROR = path.join(ROOT, 'mirror');
+const SITE_ASSETS = path.join(ROOT, 'assets');
 const manifest = JSON.parse(fs.readFileSync(path.join(MIRROR, 'manifest.json'), 'utf8'));
 const port = Number(process.env.PORT || process.argv[2] || 4187);
 
@@ -41,10 +42,37 @@ function sendFile(req, res, filename, type) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  if (url.pathname === '/') {
-    res.writeHead(302, { Location: manifest.defaultRoute });
-    res.end();
+  if (url.pathname === '/' || url.pathname === '/en' || url.pathname === '/en/') {
+    sendFile(req, res, path.join(ROOT, 'index.html'), 'text/html; charset=utf-8');
     return;
+  }
+  if (url.pathname === '/styles.css') {
+    sendFile(req, res, path.join(ROOT, 'styles.css'), 'text/css; charset=utf-8');
+    return;
+  }
+  if (url.pathname === '/app.js') {
+    sendFile(req, res, path.join(ROOT, 'app.js'), 'text/javascript; charset=utf-8');
+    return;
+  }
+  if (url.pathname.startsWith('/assets/')) {
+    const filename = path.basename(url.pathname);
+    const fullPath = path.join(SITE_ASSETS, filename);
+    if (fs.existsSync(fullPath)) {
+      const ext = path.extname(filename).toLowerCase();
+      const types = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+      sendFile(req, res, fullPath, types[ext]);
+      return;
+    }
+  }
+  if (url.pathname.startsWith('/media/')) {
+    const filename = path.basename(url.pathname);
+    const fullPath = path.join(MIRROR, 'assets', filename);
+    if (fs.existsSync(fullPath)) {
+      const ext = path.extname(filename).toLowerCase();
+      const types = { '.mp4': 'video/mp4', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.woff2': 'font/woff2' };
+      sendFile(req, res, fullPath, types[ext]);
+      return;
+    }
   }
   const asset = manifest.assets[url.pathname + url.search] || manifest.assets[url.pathname];
   if (asset) {
@@ -61,6 +89,6 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  console.log(`Trendy local mirror: http://127.0.0.1:${port}/en`);
-  console.log(`${Object.keys(manifest.pages).length} pages and ${Object.keys(manifest.assets).length} assets available locally.`);
+  console.log(`Trendy redesign: http://127.0.0.1:${port}/en`);
+  console.log(`Original capture remains available for its other routes and ${Object.keys(manifest.assets).length} local assets.`);
 });
