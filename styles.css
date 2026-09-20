@@ -225,7 +225,7 @@ body.contact-open{overflow:hidden}
   .work-carousel .work-heading p{max-width:25ch;margin-top:28px;font-size:10px}
   .work-carousel-stage{position:absolute;z-index:1;inset:0;overflow:hidden;perspective:1050px;perspective-origin:50% 58%}
   .work-carousel-track{position:absolute;inset:0;display:block;overflow:visible;padding:0;scroll-snap-type:none}
-  .work-carousel-card{position:absolute;left:50%;top:65%;width:min(60vw,280px);max-width:none;transform-style:preserve-3d;box-shadow:0 20px 42px rgba(0,0,0,.16);scroll-snap-align:none}
+  .work-carousel-card{position:absolute;left:50%;top:74%;width:min(60vw,280px);max-width:none;transform-style:preserve-3d;box-shadow:0 20px 42px rgba(0,0,0,.16);scroll-snap-align:none}
   .work-carousel-card .work-media{aspect-ratio:9/16}
   .work-carousel-card .work-caption{grid-template-columns:1fr auto;padding:13px 2px 15px}
   .work-carousel-card .work-caption p{display:none}
@@ -234,3 +234,10 @@ body.contact-open{overflow:hidden}
   .work-carousel-progress{display:block;left:var(--pad);right:74px;bottom:24px}
   .work-carousel-count{display:block;right:var(--pad);bottom:16px}
 }
+
+.phone-input{display:grid;grid-template-columns:minmax(112px,.42fr) 1fr;gap:14px;align-items:end}
+.phone-input select{min-width:0}
+.phone-input input{min-width:0}
+.contact-fields select.branded-select,.phone-input select{font-weight:700;letter-spacing:.03em}
+.contact-fields select.branded-select:focus,.phone-input select:focus{border-color:#d9ff45}
+@media(max-width:740px){.phone-input{grid-template-columns:minmax(108px,.6fr) 1fr;gap:12px}.work-carousel-intro{background:linear-gradient(var(--paper) 0 76%,transparent);padding-bottom:16px}}

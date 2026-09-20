@@ -11,6 +11,20 @@ const manifest = JSON.parse(fs.readFileSync(path.join(MIRROR, 'manifest.json'), 
 const port = Number(process.env.PORT || process.argv[2] || 4187);
 const contactAttempts = new Map();
 const allowedServices = new Set(['strategy', 'content', 'production', 'social', 'campaign', 'other']);
+const phoneCountries = {
+  QA: { code: '+974', min: 8, max: 8 },
+  AE: { code: '+971', min: 9, max: 9 },
+  SA: { code: '+966', min: 9, max: 9 },
+  KW: { code: '+965', min: 8, max: 8 },
+  BH: { code: '+973', min: 8, max: 8 },
+  OM: { code: '+968', min: 8, max: 8 },
+  GB: { code: '+44', min: 10, max: 10 },
+  US: { code: '+1', min: 10, max: 10 },
+  CA: { code: '+1', min: 10, max: 10 },
+  IN: { code: '+91', min: 10, max: 10 },
+  PK: { code: '+92', min: 10, max: 10 },
+  EG: { code: '+20', min: 10, max: 10 }
+};
 
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -96,7 +110,7 @@ async function deliverContact(submission) {
       text: [
         `Name: ${submission.name}`,
         `Email: ${submission.email}`,
-        `Phone: ${submission.phone}`,
+        `Phone: ${submission.phoneCountry} ${phoneCountries[submission.phoneCountry]?.code || ''} ${submission.phone}`,
         `Company: ${submission.company || 'Not provided'}`,
         `Service: ${submission.service}`,
         '',
@@ -129,6 +143,7 @@ async function handleContact(req, res) {
     const submission = {
       name: cleanLine(body.name, 100),
       email: cleanLine(body.email, 160).toLowerCase(),
+      phoneCountry: cleanLine(body.phoneCountry, 2).toUpperCase(),
       phone: cleanLine(body.phone, 30),
       company: cleanLine(body.company, 120),
       service: cleanLine(body.service, 30),
@@ -136,7 +151,9 @@ async function handleContact(req, res) {
       submittedAt: new Date().toISOString()
     };
     const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(submission.email);
-    const phoneIsValid = /^[0-9+().\-\s]{7,30}$/.test(submission.phone) && submission.phone.replace(/\D/g, '').length >= 7;
+    const phoneConfig = phoneCountries[submission.phoneCountry];
+    const phoneDigits = submission.phone.replace(/\D/g, '');
+    const phoneIsValid = Boolean(phoneConfig) && /^[0-9().\-\s]{7,30}$/.test(submission.phone) && phoneDigits.length >= phoneConfig.min && phoneDigits.length <= phoneConfig.max;
     if (submission.name.length < 2 || !emailIsValid || !phoneIsValid || !allowedServices.has(submission.service) || submission.message.length < 20) {
       sendJson(res, 400, { message: 'Please provide your name, a valid email and phone number, service, and project brief.' });
       return;
