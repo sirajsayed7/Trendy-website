@@ -165,7 +165,7 @@ if (workCarousel) {
     progressBar.style.transform = `scaleX(${progress})`;
     const activeRawOffset = nextIndex - position;
     const activeOffset = ((activeRawOffset + cards.length / 2) % cards.length + cards.length) % cards.length - cards.length / 2;
-    const playThreshold = desktopCarousel.matches ? 0.2 : 0.34;
+    const playThreshold = desktopCarousel.matches ? 0.2 : 0.65;
     setActiveVideo(nextIndex, sectionVisible, Math.abs(activeOffset) < playThreshold);
     if (Math.abs(targetPosition - renderedPosition) >= 0.001) requestWorkCarouselRender();
   }
@@ -207,6 +207,16 @@ const showreelObserver = new IntersectionObserver(([entry]) => {
   setShowreelPlaying(entry.isIntersecting);
 }, { threshold: 0.18 });
 showreelObserver.observe(showreel);
+
+function syncShowreelPlayback() {
+  const rect = showreel.getBoundingClientRect();
+  const visible = rect.bottom > 0 && rect.top < window.innerHeight;
+  if (visible && !showreelUserPaused && showreel.paused) setShowreelPlaying(true);
+  if (!visible && !showreel.paused) setShowreelPlaying(false);
+}
+
+showreel.addEventListener('canplay', syncShowreelPlayback);
+window.addEventListener('scroll', syncShowreelPlayback, { passive: true });
 
 toggle.addEventListener('click', () => {
   if (showreel.paused) {
@@ -373,6 +383,24 @@ function closeContact() {
 }
 
 if (contactForm) {
+  const phoneCountry = contactForm.elements.phoneCountry;
+  const phoneInput = contactForm.elements.phone;
+
+  function syncPhoneCountry() {
+    const option = phoneCountry.options[phoneCountry.selectedIndex];
+    const min = Number(option.dataset.min || 7);
+    const max = Number(option.dataset.max || 30);
+    phoneInput.removeAttribute('minlength');
+    phoneInput.removeAttribute('maxlength');
+    phoneInput.minLength = min;
+    phoneInput.maxLength = max;
+    phoneInput.placeholder = option.dataset.placeholder || '';
+    phoneInput.setAttribute('aria-label', `Phone number for ${option.textContent}`);
+  }
+
+  phoneCountry.addEventListener('change', syncPhoneCountry);
+  syncPhoneCountry();
+
   document.querySelectorAll('[data-contact-open], .work-card a').forEach((trigger) => {
     trigger.addEventListener('click', (event) => {
       event.preventDefault();
@@ -418,6 +446,7 @@ if (contactForm) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || 'Please check the form and try again.');
       contactForm.reset();
+      syncPhoneCountry();
       contactStatus.textContent = result.message;
       contactStatus.classList.add('is-success');
     } catch (error) {

@@ -14,7 +14,7 @@ The custom Node server supports byte ranges so the local MP4 videos can seek and
 
 ## Contact form delivery
 
-The popup collects name, email, phone, company, service and a short brief. It stores submissions locally in `data/contact-submissions.jsonl` by default. To deliver enquiries by email instead, set these environment variables before starting the site:
+The popup collects name, country-aware phone, email, company, service and a short brief. The phone input keeps the country code separate and validates the local number length for the selected country. It stores submissions locally in `data/contact-submissions.jsonl` by default. To deliver enquiries by email instead, set these environment variables before starting the site:
 
 ```text
 SMTP_HOST=smtp.example.com
