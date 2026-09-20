@@ -9,8 +9,24 @@ function syncResponsiveHeader() {
   else header.removeAttribute('hidden');
 }
 
+const darkMenuSurfaces = ['.project-rail', '.sector-ticker', '.showreel', '.capabilities', '.contact'];
+
+function syncMenuTone() {
+  if (!menuButton || desktopHeaderQuery.matches) return;
+  const fixedMenuY = 42;
+  const onDarkSurface = menu.classList.contains('open') || darkMenuSurfaces.some((selector) => {
+    return [...document.querySelectorAll(selector)].some((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.top <= fixedMenuY && rect.bottom > fixedMenuY;
+    });
+  });
+  menuButton.classList.toggle('is-light', onDarkSurface);
+}
+
 syncResponsiveHeader();
 desktopHeaderQuery.addEventListener('change', syncResponsiveHeader);
+window.addEventListener('scroll', syncMenuTone, { passive: true });
+window.addEventListener('resize', syncMenuTone);
 
 window.addEventListener('load', () => {
   const previewSection = new URLSearchParams(window.location.search).get('section');
@@ -26,10 +42,12 @@ function setMenu(open) {
   menu.setAttribute('aria-hidden', String(!open));
   menuButton.setAttribute('aria-expanded', String(open));
   menuButton.querySelector('span').textContent = open ? 'Close' : 'Menu';
+  syncMenuTone();
 }
 
 menuButton.addEventListener('click', () => setMenu(!menu.classList.contains('open')));
 menu.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => setMenu(false)));
+syncMenuTone();
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') setMenu(false);
 });
@@ -44,26 +62,167 @@ const revealObserver = new IntersectionObserver((entries) => {
 }, { threshold: 0.12 });
 document.querySelectorAll('.reveal').forEach((element) => revealObserver.observe(element));
 
-const workVideos = document.querySelectorAll('.work-card video');
-const videoObserver = new IntersectionObserver((entries) => {
-  entries.forEach((entry) => {
-    if (entry.isIntersecting && !reducedMotion) entry.target.play().catch(() => {});
-    else entry.target.pause();
+function playMutedVideo(video) {
+  if (!video) return Promise.resolve();
+  video.muted = true;
+  video.defaultMuted = true;
+  return video.play().catch(() => {});
+}
+
+const workCarousel = document.querySelector('[data-work-carousel]');
+
+if (workCarousel) {
+  const cards = [...workCarousel.querySelectorAll('[data-work-slide]')];
+  const videos = cards.map((card) => card.querySelector('video'));
+  const track = workCarousel.querySelector('.work-carousel-track');
+  const progressBar = workCarousel.querySelector('.work-carousel-progress span');
+  const currentLabel = workCarousel.querySelector('[data-work-current]');
+  const desktopCarousel = window.matchMedia('(min-width: 741px)');
+  let activeIndex = -1;
+  let activeVisible = false;
+  let activePlaying = false;
+  let frameRequested = false;
+  let targetPosition = 0;
+  let renderedPosition = 0;
+
+  function setActiveVideo(nextIndex, sectionVisible, shouldPlay = sectionVisible) {
+    const nextPlaying = sectionVisible && shouldPlay && !reducedMotion;
+    if (activeIndex === nextIndex && activeVisible === sectionVisible && activePlaying === nextPlaying) {
+      if (nextPlaying && videos[nextIndex].paused) playMutedVideo(videos[nextIndex]);
+      return;
+    }
+    activeIndex = nextIndex;
+    activeVisible = sectionVisible;
+    activePlaying = nextPlaying;
+    cards.forEach((card, index) => {
+      const isActive = sectionVisible && index === nextIndex;
+      card.classList.toggle('is-active', isActive);
+      card.setAttribute('aria-hidden', String(!isActive));
+      card.querySelector('a').tabIndex = isActive ? 0 : -1;
+      if (isActive && nextPlaying) playMutedVideo(videos[index]);
+      else videos[index].pause();
+    });
+    currentLabel.textContent = String(nextIndex + 1).padStart(2, '0');
+  }
+
+  function measureWorkCarousel() {
+    const rect = workCarousel.getBoundingClientRect();
+    const sectionVisible = rect.bottom > 0 && rect.top < window.innerHeight;
+
+    if (reducedMotion) {
+      const trackCenter = track.scrollLeft + track.clientWidth / 2;
+      const nextIndex = cards.reduce((closestIndex, card, index) => {
+        const cardCenter = card.offsetLeft + card.offsetWidth / 2;
+        const closestCard = cards[closestIndex];
+        const closestCenter = closestCard.offsetLeft + closestCard.offsetWidth / 2;
+        return Math.abs(cardCenter - trackCenter) < Math.abs(closestCenter - trackCenter) ? index : closestIndex;
+      }, 0);
+      const activeCard = cards[nextIndex];
+      const activeCenter = activeCard.offsetLeft + activeCard.offsetWidth / 2;
+      const centered = Math.abs(activeCenter - trackCenter) < track.clientWidth * 0.18;
+      setActiveVideo(nextIndex, sectionVisible, centered);
+      return;
+    }
+
+    const scrollableDistance = Math.max(workCarousel.offsetHeight - window.innerHeight, 1);
+    const progress = Math.min(1, Math.max(0, -rect.top / scrollableDistance));
+    targetPosition = progress * (cards.length - 1);
+    requestWorkCarouselRender();
+  }
+
+  function renderWorkCarousel() {
+    frameRequested = false;
+    const rect = workCarousel.getBoundingClientRect();
+    const sectionVisible = rect.bottom > 0 && rect.top < window.innerHeight;
+    const delta = targetPosition - renderedPosition;
+    renderedPosition += Math.abs(delta) < 0.001 ? delta : delta * 0.18;
+    const position = renderedPosition;
+    const progress = position / Math.max(cards.length - 1, 1);
+    const nextIndex = Math.round(position);
+    const isMobile = !desktopCarousel.matches;
+    const ringRadius = isMobile ? Math.min(track.clientWidth * 0.56, 190) : Math.min(track.clientWidth * 0.39, 300);
+    const angleStep = isMobile ? 66 : 72;
+
+    cards.forEach((card, index) => {
+      const rawOffset = index - position;
+      const half = cards.length / 2;
+      const offset = ((rawOffset + half) % cards.length + cards.length) % cards.length - half;
+      const angle = offset * angleStep;
+      const radians = angle * Math.PI / 180;
+      const depth = Math.cos(radians);
+      const x = Math.sin(radians) * ringRadius;
+      const y = (1 - depth) * (isMobile ? 18 : 32);
+      const z = (depth - 1) * ringRadius;
+      const scale = 0.78 + Math.max(depth, 0) * 0.22;
+      const centeredX = x - card.offsetWidth / 2;
+      const centeredY = y - card.offsetHeight / 2;
+      card.style.transform = `translate3d(${centeredX}px, ${centeredY}px, ${z}px) rotateY(${angle}deg) scale(${scale})`;
+      card.style.opacity = String(Math.max(0.32, 0.6 + depth * 0.4));
+      card.style.zIndex = String(50 + Math.round(depth * 20));
+      card.style.pointerEvents = Math.abs(offset) < 0.5 ? 'auto' : 'none';
+    });
+
+    progressBar.style.transform = `scaleX(${progress})`;
+    const activeRawOffset = nextIndex - position;
+    const activeOffset = ((activeRawOffset + cards.length / 2) % cards.length + cards.length) % cards.length - cards.length / 2;
+    const playThreshold = desktopCarousel.matches ? 0.2 : 0.34;
+    setActiveVideo(nextIndex, sectionVisible, Math.abs(activeOffset) < playThreshold);
+    if (Math.abs(targetPosition - renderedPosition) >= 0.001) requestWorkCarouselRender();
+  }
+
+  function requestWorkCarouselRender() {
+    if (frameRequested) return;
+    frameRequested = true;
+    window.requestAnimationFrame(renderWorkCarousel);
+  }
+
+  window.addEventListener('scroll', measureWorkCarousel, { passive: true });
+  window.addEventListener('resize', measureWorkCarousel);
+  track.addEventListener('scroll', measureWorkCarousel, { passive: true });
+  desktopCarousel.addEventListener('change', measureWorkCarousel);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') measureWorkCarousel();
+    else videos.forEach((video) => video.pause());
   });
-}, { rootMargin: '-15% 0px -15%', threshold: 0.2 });
-workVideos.forEach((video) => videoObserver.observe(video));
+  measureWorkCarousel();
+}
 
 const showreel = document.querySelector('.showreel video');
 const toggle = document.querySelector('[data-video-toggle]');
-toggle.addEventListener('click', () => {
-  if (showreel.paused) {
-    showreel.play().catch(() => {});
+let showreelUserPaused = false;
+
+function setShowreelPlaying(playing) {
+  if (playing && !reducedMotion && !showreelUserPaused) {
+    playMutedVideo(showreel);
     toggle.textContent = 'Ⅱ';
     toggle.setAttribute('aria-label', 'Pause showreel');
   } else {
     showreel.pause();
     toggle.textContent = '▶';
     toggle.setAttribute('aria-label', 'Play showreel');
+  }
+}
+
+const showreelObserver = new IntersectionObserver(([entry]) => {
+  setShowreelPlaying(entry.isIntersecting);
+}, { threshold: 0.18 });
+showreelObserver.observe(showreel);
+
+toggle.addEventListener('click', () => {
+  if (showreel.paused) {
+    showreelUserPaused = false;
+    setShowreelPlaying(true);
+  } else {
+    showreelUserPaused = true;
+    setShowreelPlaying(false);
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') showreel.pause();
+  else {
+    const rect = showreel.getBoundingClientRect();
+    setShowreelPlaying(rect.bottom > 0 && rect.top < window.innerHeight);
   }
 });
 
@@ -85,8 +244,8 @@ const projectData = {
     title: 'Food that moves.',
     client: 'One Stop · Gota',
     services: 'Strategy · Food film · Social',
-    video: '/media/d52bb18e55cc3d9dbb8885b1.mp4',
-    poster: '/media/ff3ccab4b45526e4d7faf9ec.jpg',
+    video: '/media/350e255be2226ad4e771ed2e.mp4',
+    poster: '/assets/rail-gota-clean-final-v3.png',
     description: 'From the first pour to the final bite, we make food and beverage content feel immediate. Bold concepts, appetite-led filmmaking and social systems designed to turn attention into action.'
   },
   campaigns: {
@@ -96,7 +255,7 @@ const projectData = {
     client: 'Trendy campaign partners',
     services: 'Concept · Production · Rollout',
     video: '/media/cc0d02b5722e10acb1516583.mp4',
-    poster: '/assets/hero-doha.png',
+    poster: '/assets/rail-film-clean-final-v3.png',
     description: 'A single sharp idea, carried across every format. We shape campaign platforms, direct the production and build the social rollout so each launch lands as one connected story.'
   },
   corporate: {
@@ -105,8 +264,8 @@ const projectData = {
     title: 'Driven by detail.',
     client: 'Denza Qatar',
     services: 'Story · Film · Campaign content',
-    video: '/media/350e255be2226ad4e771ed2e.mp4',
-    poster: '/media/88dbb2a3a602efe9f30eace6.jpg',
+    video: '/media/d52bb18e55cc3d9dbb8885b1.mp4',
+    poster: '/assets/rail-corporate-clean-final-v3.png',
     description: 'Corporate does not have to feel corporate. We translate product, people and purpose into confident films and social content with clarity, pace and character.'
   },
   lifestyle: {
@@ -116,7 +275,7 @@ const projectData = {
     client: 'Sada',
     services: 'Art direction · Film · Social',
     video: '/media/eb5aa81baf629d2062c653db.mp4',
-    poster: '/media/51b58e4573abca07c7c8800b.jpg',
+    poster: '/assets/rail-saada-clean-final-v3.png',
     description: 'Editorial art direction meets the pace of social. We build visually distinct worlds for fashion, hospitality and lifestyle brands while keeping every frame rooted in local culture.'
   }
 };
@@ -191,4 +350,82 @@ document.addEventListener('keydown', (event) => {
 const initialProject = new URLSearchParams(window.location.search).get('project');
 if (projectData[initialProject]) {
   window.addEventListener('load', () => openProject(initialProject, document.querySelector(`[data-project="${initialProject}"]`)));
+}
+
+const contactForm = document.querySelector('#contact-form');
+const contactStatus = document.querySelector('[data-contact-status]');
+const contactOverlay = document.querySelector('[data-contact-overlay]');
+let contactTrigger = null;
+
+function openContact(trigger) {
+  contactTrigger = trigger;
+  contactOverlay.classList.add('open');
+  contactOverlay.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('contact-open');
+  window.setTimeout(() => contactForm.elements.name.focus(), 80);
+}
+
+function closeContact() {
+  contactOverlay.classList.remove('open');
+  contactOverlay.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('contact-open');
+  if (contactTrigger) contactTrigger.focus({ preventScroll: true });
+}
+
+if (contactForm) {
+  document.querySelectorAll('[data-contact-open], .work-card a').forEach((trigger) => {
+    trigger.addEventListener('click', (event) => {
+      event.preventDefault();
+      openContact(trigger);
+    });
+  });
+  document.querySelectorAll('[data-contact-close]').forEach((button) => button.addEventListener('click', closeContact));
+
+  document.addEventListener('keydown', (event) => {
+    if (!contactOverlay.classList.contains('open')) return;
+    if (event.key === 'Escape') closeContact();
+    if (event.key === 'Tab') {
+      const focusable = [...contactOverlay.querySelectorAll('button, input, select, textarea')].filter((element) => !element.disabled && element.tabIndex !== -1);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  });
+
+  contactForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!contactForm.reportValidity()) return;
+
+    const submitButton = contactForm.querySelector('button[type="submit"]');
+    const submitLabel = submitButton.querySelector('span');
+    submitButton.disabled = true;
+    submitLabel.textContent = 'Sending';
+    contactStatus.textContent = '';
+    contactStatus.classList.remove('is-error', 'is-success');
+
+    try {
+      const response = await fetch(contactForm.action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(Object.fromEntries(new FormData(contactForm)))
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Please check the form and try again.');
+      contactForm.reset();
+      contactStatus.textContent = result.message;
+      contactStatus.classList.add('is-success');
+    } catch (error) {
+      contactStatus.textContent = error.message || 'Something went wrong. Email hello@trendy.qa instead.';
+      contactStatus.classList.add('is-error');
+    } finally {
+      submitButton.disabled = false;
+      submitLabel.textContent = 'Send the brief';
+    }
+  });
 }

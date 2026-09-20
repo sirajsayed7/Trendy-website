@@ -8,3 +8,4 @@ redesign-mobile*.png
 assets/approved-home.jpeg
 .qa-*/
 redesign-*.png
+data/*.jsonl

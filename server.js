@@ -1,12 +1,158 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const nodemailer = require('nodemailer');
 
 const ROOT = __dirname;
 const MIRROR = path.join(ROOT, 'mirror');
 const SITE_ASSETS = path.join(ROOT, 'assets');
+const CONTACT_DATA_FILE = process.env.CONTACT_DATA_FILE || path.join(ROOT, 'data', 'contact-submissions.jsonl');
 const manifest = JSON.parse(fs.readFileSync(path.join(MIRROR, 'manifest.json'), 'utf8'));
 const port = Number(process.env.PORT || process.argv[2] || 4187);
+const contactAttempts = new Map();
+const allowedServices = new Set(['strategy', 'content', 'production', 'social', 'campaign', 'other']);
+
+function sendJson(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store'
+  });
+  res.end(body);
+}
+
+function readJsonBody(req, maxBytes = 32 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let tooLarge = false;
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      if (tooLarge) return;
+      body += chunk;
+      if (Buffer.byteLength(body) > maxBytes) {
+        tooLarge = true;
+        reject(new Error('PAYLOAD_TOO_LARGE'));
+      }
+    });
+    req.on('end', () => {
+      if (tooLarge) return;
+      try {
+        resolve(JSON.parse(body || '{}'));
+      } catch {
+        reject(new Error('INVALID_JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function cleanText(value, maxLength) {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function cleanLine(value, maxLength) {
+  return cleanText(value, maxLength).replace(/[\r\n]+/g, ' ');
+}
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  const windowStart = now - 10 * 60 * 1000;
+  const recent = (contactAttempts.get(ip) || []).filter((time) => time > windowStart);
+  recent.push(now);
+  contactAttempts.set(ip, recent);
+  return recent.length > 5;
+}
+
+async function deliverContact(submission) {
+  let delivered = false;
+
+  if (process.env.LEADS_WEBHOOK_URL) {
+    const response = await fetch(process.env.LEADS_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.LEADS_WEBHOOK_TOKEN ? { Authorization: `Bearer ${process.env.LEADS_WEBHOOK_TOKEN}` } : {})
+      },
+      body: JSON.stringify(submission),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) throw new Error(`Lead backend returned ${response.status}`);
+    delivered = true;
+  }
+
+  if (process.env.SMTP_HOST && process.env.CONTACT_TO) {
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
+    });
+    await transporter.sendMail({
+      from: process.env.CONTACT_FROM || process.env.SMTP_USER,
+      to: process.env.CONTACT_TO,
+      replyTo: submission.email,
+      subject: `New Trendy enquiry from ${submission.name}`,
+      text: [
+        `Name: ${submission.name}`,
+        `Email: ${submission.email}`,
+        `Phone: ${submission.phone}`,
+        `Company: ${submission.company || 'Not provided'}`,
+        `Service: ${submission.service}`,
+        '',
+        submission.message
+      ].join('\n')
+    });
+    delivered = true;
+  }
+
+  if (!delivered) {
+    fs.mkdirSync(path.dirname(CONTACT_DATA_FILE), { recursive: true });
+    fs.appendFileSync(CONTACT_DATA_FILE, `${JSON.stringify(submission)}\n`, { mode: 0o600 });
+  }
+}
+
+async function handleContact(req, res) {
+  const ip = req.socket.remoteAddress || 'unknown';
+  if (isRateLimited(ip)) {
+    sendJson(res, 429, { message: 'Too many attempts. Please wait a few minutes and try again.' });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req);
+    if (cleanText(body.website, 200)) {
+      sendJson(res, 200, { message: 'Thanks — your brief is with us.' });
+      return;
+    }
+
+    const submission = {
+      name: cleanLine(body.name, 100),
+      email: cleanLine(body.email, 160).toLowerCase(),
+      phone: cleanLine(body.phone, 30),
+      company: cleanLine(body.company, 120),
+      service: cleanLine(body.service, 30),
+      message: cleanText(body.message, 3000),
+      submittedAt: new Date().toISOString()
+    };
+    const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(submission.email);
+    const phoneIsValid = /^[0-9+().\-\s]{7,30}$/.test(submission.phone) && submission.phone.replace(/\D/g, '').length >= 7;
+    if (submission.name.length < 2 || !emailIsValid || !phoneIsValid || !allowedServices.has(submission.service) || submission.message.length < 20) {
+      sendJson(res, 400, { message: 'Please provide your name, a valid email and phone number, service, and project brief.' });
+      return;
+    }
+
+    await deliverContact(submission);
+    sendJson(res, 200, { message: 'Thanks — your brief is with us. We’ll be in touch soon.' });
+  } catch (error) {
+    if (error.message === 'PAYLOAD_TOO_LARGE') {
+      sendJson(res, 413, { message: 'That brief is too large to submit.' });
+      return;
+    }
+    const status = error.message === 'INVALID_JSON' ? 400 : 500;
+    sendJson(res, status, { message: status === 400 ? 'Please submit a valid form.' : 'We could not send this right now. Email hello@trendy.qa instead.' });
+  }
+}
 
 function pageFor(url) {
   const exact = manifest.pages[url.pathname + url.search];
@@ -40,8 +186,17 @@ function sendFile(req, res, filename, type) {
   fs.createReadStream(filename).pipe(res);
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.pathname === '/api/contact') {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { message: 'Method not allowed.' });
+      return;
+    }
+    await handleContact(req, res);
+    return;
+  }
   if (url.pathname === '/' || url.pathname === '/en' || url.pathname === '/en/') {
     sendFile(req, res, path.join(ROOT, 'index.html'), 'text/html; charset=utf-8');
     return;
